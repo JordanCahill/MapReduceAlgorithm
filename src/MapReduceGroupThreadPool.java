@@ -1,5 +1,7 @@
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.PrintWriter;
+import java.io.UnsupportedEncodingException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -8,7 +10,19 @@ import java.util.concurrent.Executors;
 /**
  * This class adds the map functions to a thread pool to observe the time taken using different amounts of threads
  */
-public class MapReduceWMapThreadPool {
+public class MapReduceGroupThreadPool {
+
+    public static PrintWriter writer;
+
+    static {
+        try {
+            writer = new PrintWriter("resultsGroup.txt", "UTF-8");
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        } catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
+        }
+    }
 
     public static void main(String[] args) throws FileNotFoundException {
 
@@ -28,6 +42,7 @@ public class MapReduceWMapThreadPool {
             }
             input.put(name, contentsSB.toString());
         }
+        System.out.println("Time to load files: " + (System.currentTimeMillis() - startTime));
 
         // Initialize hashmap to store output results
         final Map<String, Map<String, Integer>> output = new ConcurrentHashMap<>();
@@ -49,9 +64,7 @@ public class MapReduceWMapThreadPool {
             }
         };
 
-        Iterator<Map.Entry<String, String>> inputIter = input.entrySet().iterator();
-        while (inputIter.hasNext()) {
-            Map.Entry<String, String> entry = inputIter.next();
+        for (Map.Entry<String, String> entry : input.entrySet()) {
             final String file = entry.getKey();
             final String contents = entry.getValue();
 
@@ -64,26 +77,40 @@ public class MapReduceWMapThreadPool {
         while(!ex.isTerminated());
 
         // Calculate and print time taken
-        final long timeTaken = System.currentTimeMillis() - startTime;
-        System.out.println("Total Time taken with " + poolSize + " threads: " + timeTaken);
+        final long mapTime = System.currentTimeMillis();
+        final long timeTakenMap = mapTime - startTime;
+        System.out.println("Total Time taken to create map with " + poolSize + " threads: " + timeTakenMap);
 
         // GROUP: -------------------------------------------------------------
 
         Map<String, List<String>> groupedItems = new HashMap<String, List<String>>();
 
+        ExecutorService exGroup = Executors.newFixedThreadPool(poolSize); // Initialize thread pool with x threads
+
+        final long mapTime2 = System.currentTimeMillis();
+
+        // Call back to allow results to be added to mappedItems, note the synchronized keyword
+        final GroupCallback<String, String> groupCallback = new GroupCallback<String, String>() {
+            @Override
+            public synchronized void groupDone(String file, List<String> list) {
+                list.add(file);
+            }
+        };
+
         // Group all items in a LinkedList
-        Iterator<MappedItem> mappedIter = mappedItems.iterator();
-        while(mappedIter.hasNext()) {
-            MappedItem item = mappedIter.next();
+        for (MappedItem item : mappedItems) {
             String word = item.getWord();
             String file = item.getFile();
-            List<String> list = groupedItems.get(word);
-            if (list == null) {
-                list = new LinkedList<String>();
-                groupedItems.put(word, list);
-            }
-            list.add(file);
+
+            exGroup.execute(() -> group(word, file, groupedItems, groupCallback));
         }
+
+        // Wait for thread pools to finish to calculate the time accurately
+        exGroup.shutdown();
+        while(!exGroup.isTerminated());
+
+        // Calculate and print time taken
+        System.out.println("Total Time taken to group: " + (System.currentTimeMillis() - startTime));
 
         // REDUCE: --------------------------------------------------------------
 
@@ -120,6 +147,8 @@ public class MapReduceWMapThreadPool {
                 throw new RuntimeException(e);
             }
         }
+        System.out.println("Total Time taken to reduce: " + (System.currentTimeMillis() - startTime));
+        writer.close();
     }
 
 
@@ -133,6 +162,15 @@ public class MapReduceWMapThreadPool {
         callback.mapDone(file, results);
     }
 
+    public static void group(String word, String file, Map<String, List<String>> groupedItems, GroupCallback<String, String> callback) {
+        List<String> list = groupedItems.get(word);
+        if (list == null) {
+            list = new LinkedList<String>();
+            groupedItems.put(word, list);
+        }
+        callback.groupDone(file,list);
+    }
+
     public static void reduce(String word, List<String> list, ReduceCallback<String, String, Integer> callback) {
 
         Map<String, Integer> reducedList = new ConcurrentHashMap<String,Integer>();
@@ -144,11 +182,15 @@ public class MapReduceWMapThreadPool {
                 reducedList.put(file, occurrences + 1);
             }
         }
+        writer.println("'" + word  + "' => " + reducedList);
         callback.reduceDone(word, reducedList);
     }
 
     public static interface MapCallback<E, V> {
         public void mapDone(E key, List<V> values);
+    }
+    public static interface GroupCallback<E, V> {
+        public void groupDone(E key, List<V> values);
     }
     public interface ReduceCallback<E, K, V> {
         void reduceDone(E e, Map<K, V> results);

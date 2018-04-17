@@ -1,13 +1,24 @@
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.PrintWriter;
+import java.io.UnsupportedEncodingException;
+import java.util.*;
 
 public class MapReduce {
 
-    public static void main(String[] args) {
+    public static PrintWriter writer;
+
+    static {
+        try {
+            writer = new PrintWriter("resultsOriginal.txt", "UTF-8");
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        } catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) throws FileNotFoundException {
 
         // the problem:
 
@@ -34,15 +45,31 @@ public class MapReduce {
         // together with the number of occurrences of that word
         // without any sorting
 
+
+
         ////////////
         // INPUT:
         ///////////
 
+        // Get start time to compare different numbers of threads
+        final long startTime = System.currentTimeMillis();
         Map<String, String> input = new HashMap<String, String>();
-        input.put("file1.txt", "foo foo bar cat dog dog");
-        input.put("file2.txt", "foo house cat cat dog");
-        input.put("file3.txt", "foo foo foo bird");
+        // Read in arguments
+        for (int i = 0; i < args.length; i++) {
+            File file = new File(args[i]);
+            String name = file.getName();
+            StringBuilder contentsSB = new StringBuilder((int) file.length());
+            Scanner scanner = new Scanner(file);
+            while (scanner.hasNextLine()) {
+                contentsSB.append(scanner.nextLine() + "\n");
+            }
+            input.put(name, contentsSB.toString());
+        }
+        System.out.println("Time to load files: " + (System.currentTimeMillis() - startTime));
 
+        // Approaches 1 and 2 are commented out to check time taken
+
+        /*
         // APPROACH #1: Brute force
         {
             Map<String, Map<String, Integer>> output = new HashMap<String, Map<String, Integer>>();
@@ -125,7 +152,7 @@ public class MapReduce {
             System.out.println(output);
         }
 
-
+        */
         // APPROACH #3: Distributed MapReduce
         {
             final Map<String, Map<String, Integer>> output = new HashMap<String, Map<String, Integer>>();
@@ -168,6 +195,9 @@ public class MapReduce {
                 }
             }
 
+
+            System.out.println("Time to finish Mapping: " + (System.currentTimeMillis() - startTime));
+
             // GROUP:
 
             Map<String, List<String>> groupedItems = new HashMap<String, List<String>>();
@@ -184,6 +214,8 @@ public class MapReduce {
                 }
                 list.add(file);
             }
+
+            System.out.println("Time to finish Grouping: " + (System.currentTimeMillis() - startTime));
 
             // REDUCE:
 
@@ -221,7 +253,8 @@ public class MapReduce {
                 }
             }
 
-            System.out.println(output);
+            System.out.println("Time to finish Reducing: " + (System.currentTimeMillis() - startTime));
+            writer.close();
         }
     }
 
@@ -243,6 +276,7 @@ public class MapReduce {
             }
         }
         output.put(word, reducedList);
+
     }
 
 
@@ -277,6 +311,7 @@ public class MapReduce {
             }
         }
         callback.reduceDone(word, reducedList);
+        writer.println("'" + word  + "' => " + reducedList);
     }
 
     private static class MappedItem {
